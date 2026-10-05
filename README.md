@@ -80,6 +80,10 @@ Decisiones de diseño:
 - **Ley 29733 (datos personales).** `Customer.marketingConsent` y `marketingConsentAt` registran el consentimiento explícito para campañas push.
 - **Multi-sede.** `Location` guarda coordenadas, que Apple Wallet usa para mostrar el pase en la pantalla de bloqueo cuando el cliente está cerca del local.
 
+## 👉 Tu checklist
+
+Todo lo que tienes que hacer tú (cuentas, credenciales, legal Perú, piloto): **[docs/CHECKLIST.md](docs/CHECKLIST.md)**.
+
 ## Requisitos externos
 
 | Plataforma    | Costo          | Qué necesitas                                                                             |
