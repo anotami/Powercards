@@ -1,0 +1,370 @@
+// ─────────────────────────────────────────────────────────────
+// Powercards — modelo de datos
+// Multi-tenant por Merchant: toda entidad de negocio cuelga de merchantId.
+// La URL de conexión vive en prisma.config.ts (Prisma 7).
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ────────────────────────────────────────────────────
+
+enum BusinessType {
+  CAFETERIA
+  RESTAURANTE
+  POLLERIA
+  CEVICHERIA
+  JUGUERIA
+  PANADERIA
+  BODEGA
+  BARBERIA
+  SPA
+  TIENDA
+  OTRO
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+/// RBAC. SUPERADMIN = operador de la plataforma (merchantId null).
+enum UserRole {
+  SUPERADMIN
+  OWNER
+  ADMIN
+  CASHIER
+}
+
+enum ProgramType {
+  STAMPS
+  POINTS
+}
+
+enum PassStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum WalletPlatform {
+  APPLE
+  GOOGLE
+  /// Fallback web (cliente sin wallet compatible)
+  WEB
+}
+
+enum TransactionType {
+  ENROLL
+  STAMP
+  POINTS_EARN
+  REDEEM
+  ADJUST
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+// ── Tenancy ──────────────────────────────────────────────────
+
+model Merchant {
+  id           String       @id @default(cuid())
+  /// Usado en la URL pública de registro: /m/{slug}
+  slug         String       @unique
+  name         String
+  legalName    String?
+  /// RUC SUNAT (11 dígitos)
+  ruc          String?      @unique @db.VarChar(11)
+  businessType BusinessType @default(OTRO)
+  plan         Plan         @default(FREE)
+
+  // Branding por defecto (cada programa puede sobrescribirlo)
+  logoUrl         String?
+  iconUrl         String?
+  primaryColor    String  @default("#0F172A")
+  backgroundColor String  @default("#0F172A")
+  foregroundColor String  @default("#FFFFFF")
+  labelColor      String  @default("#CBD5E1")
+
+  phone     String?
+  email     String?
+  instagram String?
+  website   String?
+  timezone  String  @default("America/Lima")
+  currency  String  @default("PEN") @db.VarChar(3)
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  locations    Location[]
+  users        User[]
+  programs     LoyaltyProgram[]
+  customers    Customer[]
+  transactions Transaction[]
+  campaigns    PushCampaign[]
+}
+
+/// Sede / local físico (cadenas con varios puntos de venta).
+model Location {
+  id         String   @id @default(cuid())
+  merchantId String
+  name       String
+  address    String?
+  district   String?
+  city       String   @default("Lima")
+  /// Para notificaciones por geolocalización en Apple Wallet (pass.json "locations")
+  latitude   Float?
+  longitude  Float?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  users        User[]
+  transactions Transaction[]
+
+  @@index([merchantId])
+}
+
+/// Empleados y administradores del comercio.
+model User {
+  id           String    @id @default(cuid())
+  merchantId   String?
+  /// Sede por defecto del cajero (null = todas)
+  locationId   String?
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         UserRole  @default(CASHIER)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  merchant     Merchant?      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  location     Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+  campaigns    PushCampaign[]
+
+  @@index([merchantId])
+}
+
+// ── Programa de lealtad (plantilla de la tarjeta) ────────────
+
+model LoyaltyProgram {
+  id         String      @id @default(cuid())
+  merchantId String
+  name       String
+  type       ProgramType @default(STAMPS)
+
+  /// STAMPS: sellos necesarios para el premio ("10 sellos = 1 café gratis")
+  stampsRequired    Int     @default(10)
+  /// POINTS: puntos por cada S/ 1 consumido y costo del premio
+  pointsPerSol      Int     @default(1)
+  pointsForReward   Int     @default(100)
+  rewardTitle       String
+  rewardDescription String?
+  /// Sellos de bienvenida al registrarse
+  welcomeStamps     Int     @default(0)
+  /// Tope anti-fraude: máximo de sellos por cliente por día
+  maxStampsPerDay   Int     @default(3)
+
+  // Diseño del pase (null = hereda del Merchant)
+  logoUrl         String?
+  stripImageUrl   String?
+  backgroundColor String?
+  foregroundColor String?
+  labelColor      String?
+  /// Texto del reverso del pase (términos y condiciones)
+  terms           String?
+
+  /// Apple Pass Type ID con el que se firman los pases de este programa
+  passTypeIdentifier String
+  /// Google Wallet LoyaltyClass id: {issuerId}.{suffix}
+  googleClassId      String? @unique
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  merchant  Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  passes    Pass[]
+  campaigns PushCampaign[]
+
+  @@index([merchantId])
+}
+
+// ── Clientes y pases ─────────────────────────────────────────
+
+model Customer {
+  id         String    @id @default(cuid())
+  merchantId String
+  name       String
+  /// E.164, ej. +51987654321
+  phone      String
+  email      String?
+  birthday   DateTime? @db.Date
+  /// Ley 29733 (Protección de Datos Personales): consentimiento explícito
+  marketingConsent   Boolean   @default(false)
+  marketingConsentAt DateTime?
+  /// UTM / canal de captación (qr-mesa, instagram, caja...)
+  source     String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  passes   Pass[]
+
+  @@unique([merchantId, phone])
+  @@index([merchantId, createdAt])
+}
+
+model Pass {
+  id                 String         @id @default(cuid())
+  programId          String
+  customerId         String
+  /// Identificador único del pase (Apple serialNumber / sufijo de Google objectId)
+  serialNumber       String         @unique
+  passTypeIdentifier String
+  /// Token que Apple envía en "Authorization: ApplePass {token}" (≥16 chars)
+  authenticationToken String
+  /// Google Wallet LoyaltyObject id
+  googleObjectId     String?        @unique
+  platform           WalletPlatform @default(WEB)
+  status             PassStatus     @default(ACTIVE)
+
+  // Saldos (desnormalizados; la fuente de verdad es Transaction)
+  stampsBalance    Int @default(0)
+  pointsBalance    Int @default(0)
+  rewardsAvailable Int @default(0)
+  lifetimeStamps   Int @default(0)
+  rewardsRedeemed  Int @default(0)
+
+  /// Último mensaje mostrado en la pantalla de bloqueo (campo con changeMessage)
+  lastMessage   String?
+  lastVisitAt   DateTime?
+  createdAt     DateTime  @default(now())
+  /// Apple: base del header Last-Modified / passesUpdatedSince
+  updatedAt     DateTime  @updatedAt
+
+  program       LoyaltyProgram     @relation(fields: [programId], references: [id], onDelete: Cascade)
+  customer      Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  registrations PassRegistration[]
+  transactions  Transaction[]
+
+  @@unique([programId, customerId])
+  @@index([passTypeIdentifier, updatedAt])
+}
+
+/// Dispositivo Apple que tiene pases instalados (iPhone, Apple Watch).
+/// Un pase puede vivir en varios dispositivos y un dispositivo tener muchos pases,
+/// por eso pushToken/deviceLibraryIdentifier NO van en Pass.
+model AppleDevice {
+  id                      String   @id @default(cuid())
+  deviceLibraryIdentifier String   @unique
+  pushToken               String
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  registrations PassRegistration[]
+}
+
+/// Registro dispositivo↔pase (Apple PassKit Web Service).
+model PassRegistration {
+  id        String   @id @default(cuid())
+  deviceId  String
+  passId    String
+  createdAt DateTime @default(now())
+
+  device AppleDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  pass   Pass        @relation(fields: [passId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, passId])
+  @@index([passId])
+}
+
+// ── Ledger ───────────────────────────────────────────────────
+
+/// Libro mayor inmutable de movimientos. Nunca se edita, solo se agregan ajustes.
+model Transaction {
+  id         String          @id @default(cuid())
+  merchantId String
+  passId     String
+  locationId String?
+  /// Empleado que operó (null = sistema, ej. sellos de bienvenida)
+  userId     String?
+  type       TransactionType
+
+  stampsDelta  Int @default(0)
+  pointsDelta  Int @default(0)
+  rewardsDelta Int @default(0)
+  /// Snapshot del saldo tras el movimiento (auditoría)
+  stampsAfter  Int
+  pointsAfter  Int @default(0)
+
+  /// Monto del ticket en céntimos (programas por puntos)
+  amountCents  Int?
+  note         String?
+  /// Generado por el scanner: evita doble sello si el cajero toca dos veces o hay reintento de red
+  idempotencyKey String? @unique
+  /// device, IP, user-agent, versión del scanner, etc.
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  pass     Pass      @relation(fields: [passId], references: [id], onDelete: Cascade)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, createdAt])
+  @@index([passId, createdAt])
+}
+
+// ── Notificaciones ───────────────────────────────────────────
+
+model PushCampaign {
+  id          String         @id @default(cuid())
+  merchantId  String
+  /// null = todos los programas del comercio
+  programId   String?
+  createdById String?
+  title       String
+  /// Texto que aparece en la pantalla de bloqueo
+  message     String
+  /// Filtros de audiencia, ej. { "minStamps": 5, "inactiveDays": 30, "birthdayMonth": true }
+  segment     Json?
+  status      CampaignStatus @default(DRAFT)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+
+  recipientsCount Int     @default(0)
+  appleSent       Int     @default(0)
+  googleSent      Int     @default(0)
+  failedCount     Int     @default(0)
+  error           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  merchant  Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  program   LoyaltyProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+  createdBy User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, createdAt])
+  @@index([status, scheduledAt])
+}

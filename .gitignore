@@ -1,0 +1,32 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+generated/
+
+# env & secretos — NUNCA versionar certificados de Apple ni la service account de Google
+.env
+.env.*
+!.env.example
+certs/
+*.p12
+*.pem
+*.cer
+*.key
+google-service-account*.json
+
+# pases generados
+*.pkpass
+
+# logs / OS / editor
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+coverage/

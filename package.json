@@ -1,0 +1,31 @@
+{
+  "name": "powercards",
+  "private": true,
+  "description": "SaaS B2B de tarjetas de lealtad digitales para Apple Wallet y Google Wallet — hecho para comercios de Perú.",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "bootstrap": "bash scripts/setup.sh",
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @powercards/db generate",
+    "db:migrate": "pnpm --filter @powercards/db migrate",
+    "db:push": "pnpm --filter @powercards/db push",
+    "db:seed": "pnpm --filter @powercards/db seed",
+    "db:studio": "pnpm --filter @powercards/db studio"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "eslint": "^9.39.0",
+    "prettier": "^3.6.0",
+    "turbo": "^2.11.7",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.0"
+  }
+}
